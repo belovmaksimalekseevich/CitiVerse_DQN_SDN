@@ -80,7 +80,8 @@ P("Distributed software-defined networking (SDN) has become a practical way to "
   "but it cannot follow the diurnal migration of load: during the morning peak the "
   "residential controllers saturate while the commercial and industrial controllers "
   "sit almost idle, and the time needed to install a new flow grows by an order of "
-  "magnitude. We cast switch-to-controller assignment as a sequential decision "
+  "magnitude. We cast switch-to-controller assignment, that is, the dynamic "
+  "clustering of switches around controllers, as a sequential decision "
   "problem and solve it online with a Dueling Double Deep Q-Network trained with "
   "prioritized experience replay, n-step returns and a staged curriculum. Because "
   "end-to-end training requires on the order of 1.8 million environment steps, the "
@@ -106,28 +107,30 @@ for r_ in kw.runs: r_.font.size = Pt(11)
 
 # ---------------------------------------------------------------- 1 INTRO
 H("1. Introduction", 1)
-P("Smart-city and CitiVerse deployments connect thousands of edge and fog devices, "
+P("Smart-city deployments — now also described as CitiVerse environments in the "
+  "ITU-T Focus Group on Metaverse [1] — connect thousands of edge and fog devices, "
   "from traffic signals and surveillance cameras to public access points and "
   "environmental sensors, and are increasingly framed within the 5G/6G smart-city "
-  "vision [1]. The traffic these devices produce is dense, bursty and, above all, "
+  "vision [2]. The traffic these devices produce is dense, bursty and, above all, "
   "non-stationary: its spatial distribution changes over the course of a day as "
-  "people move between residential, commercial and industrial districts [2]. The way "
+  "people move between residential, commercial and industrial districts [3]. The way "
   "such smart-city IoT traffic interacts with an SDN core has been characterised "
-  "directly for city segments [3]. Software-defined networking suits these networks "
+  "directly for city segments [4]. Software-defined networking suits these networks "
   "for a concrete reason: by separating the control plane from the data plane and "
   "exposing a programmable, network-wide view, it lets the switch-to-controller "
   "mapping be recomputed and reinstalled at run time instead of being fixed at design "
-  "time [4]. Security and management studies of SDN for smart cities point the same "
-  "way [5], while the move toward 6G, with its sub-millisecond latency targets and "
-  "AI-native control, sharpens the need for this run-time adaptivity [6]. At city "
+  "time [5]. Security and management studies of SDN for smart cities point the same "
+  "way [6], and the sub-millisecond latency targets set out for 6G networks [7] leave "
+  "little headroom for a switch-to-controller mapping that no longer matches the load. "
+  "At city "
   "scale a single controller is neither reliable nor fast enough, so the control "
   "plane is distributed across several controllers, each responsible for a subset of "
-  "switches and often paired with edge computing [7].")
+  "switches and often paired with edge computing [8].")
 P("How switches are partitioned among controllers is the controller placement and "
   "clustering problem. The classical formulations are static: switches are grouped "
   "by geographic proximity or by k-means over a delay matrix, and the partition is "
-  "fixed at deployment time [8]. A substantial body of work refines this static "
-  "partition with learning-automaton [9] and metaheuristic [10] schemes, but the "
+  "fixed at deployment time [9]. A substantial body of work refines this static "
+  "partition with learning-automaton [10] and metaheuristic [11] schemes, but the "
   "partition still does not change once the network is running. "
   "Static partitions are attractive operationally and "
   "minimise propagation delay, but they are blind to load. When demand concentrates "
@@ -135,9 +138,9 @@ P("How switches are partitioned among controllers is the controller placement an
   "PACKET_IN events, their event queues build up, and the latency experienced when a "
   "new flow is set up rises steeply, even though other controllers remain idle. This "
   "is exactly the regime in which a CitiVerse network spends its mornings and evenings.")
-P("Reinforcement learning has been proposed to make placement adaptive [11], and "
+P("Reinforcement learning has been proposed to make placement adaptive [12], and "
   "deep reinforcement learning in particular can handle the large discrete decision "
-  "space that arises when any switch may be reassigned to any controller [12]. Most of "
+  "space that arises when any switch may be reassigned to any controller [13]. Most of "
   "the existing literature, however, evaluates such policies on analytical models or "
   "on synthetic parameter sets, and reports performance trends rather than measured "
   "quantities. The practical question — does a learned policy actually reduce the "
@@ -233,11 +236,11 @@ P("The reward is r = − ICD / 20 − 0.02 · m, where m is one if the action "
   "already contains both propagation and queuing, a single scalar reward is enough to "
   "express the full objective.")
 P("Network and learning algorithm.", bold=True)
-P("The value function is approximated by a Dueling network [13] with a shared "
+P("The value function is approximated by a Dueling network [14] with a shared "
   "256-unit hidden representation and LayerNorm, which separates the state value from "
   "the action advantage and stabilises learning when many actions have similar value. "
-  "We use Double Q-learning [14] to reduce the overestimation bias of plain DQN, a "
-  "prioritized experience replay buffer [15] (capacity 10⁵, α = 0.6, "
+  "We use Double Q-learning [15] to reduce the overestimation bias of plain DQN, a "
+  "prioritized experience replay buffer [16] (capacity 10⁵, α = 0.6, "
   "importance-sampling β annealed from 0.4 to 1.0) so that informative transitions "
   "are replayed more "
   "often, and 3-step returns to propagate reward faster. The network is trained with "
@@ -278,7 +281,7 @@ P("Training the agent end-to-end on the live emulation is infeasible: three seed
 H("4. Experimental testbed and methodology", 1)
 P("Topology.", bold=True)
 P("The evaluation network, shown in Fig. 1, comprises 20 Open vSwitch instances "
-  "running OpenFlow 1.3 [16] in an emulation built with Mininet [17], grouped into "
+  "running OpenFlow 1.3 [17] in an emulation built with Mininet [18], grouped into "
   "five zones and served by five Ryu controllers "
   "listening on ports 6653–6657. Two residential zones contain six and five switches, "
   "two commercial zones contain four and three, and an industrial zone contains two. "
@@ -324,7 +327,8 @@ P("For each combination of assignment policy and traffic profile we apply the "
   "the latency of a switch we clear its flow table, reinstall only the table-miss "
   "entry so that the next flow is genuinely new, and time a ping between the switch's "
   "two hosts; the round-trip to the first reply is the flow-setup latency. Each "
-  "measurement is repeated and we report the mean, together with the per-controller "
+  "per-switch measurement is repeated twice within a run and we report the mean, "
+  "together with the per-controller "
   "mean and the realised controller loads. Measurement is run after training, on the "
   "freed CPU cores, to avoid contention between the five single-threaded controllers "
   "and the training process.")
@@ -376,6 +380,9 @@ P("Table 2. Measured mean flow-setup latency (ms) on the live Mininet/Ryu testbe
   "DQN over three seeds. Lower is better.", italic=True, align='c', size=10)
 fig("measured_latency_by_profile.png", "Fig. 3. Measured flow-setup latency by "
     "profile and policy (error bar on DQN spans the three seeds). Lower is better.")
+P("The relatively large standard deviation under the morning profile (19.0 ms on a "
+  "mean of 38.0 ms) is driven by a single one of the three seeds; we return to this in "
+  "the limitations.")
 P("Why the policy wins.", bold=True)
 P("The measurements explain the morning result without appeal to the model. Under "
   "zone-static assignment the two residential controllers receive aggregate loads of "
@@ -394,7 +401,7 @@ fig("fig_per_controller_latency.png", "Fig. 4. Per-controller flow-setup latency
 fig("measured_controller_loads.png", "Fig. 5. Realised controller loads under the "
     "morning profile: the learned policy spreads load that ZoneOptimal concentrates "
     "on two controllers.")
-P("A closer look at the business profile.", bold=True)
+P("Business-profile behaviour.", bold=True)
 P("It is worth saying why the agent trails ZoneOptimal here rather than matching it. "
   "Under the business profile the busiest controller carries about ten load units, "
   "comfortably below the service rate, so no controller saturates and the queuing "
@@ -425,7 +432,8 @@ P("Two points deserve an honest statement. First, the learned policy does not "
 
 # ---------------------------------------------------------------- 6 CONCLUSION
 H("6. Conclusion", 1)
-P("We studied dynamic switch-to-controller assignment for distributed SDN in "
+P("We studied dynamic switch-to-controller assignment — the dynamic clustering of "
+  "switches around controllers — for distributed SDN in "
   "CitiVerse networks and showed, by direct measurement, that a learned policy can "
   "substantially improve control-plane responsiveness when the load is unevenly "
   "distributed across the city. The policy, a Dueling Double Deep Q-Network trained "
@@ -436,9 +444,9 @@ P("We studied dynamic switch-to-controller assignment for distributed SDN in "
   "per-controller measurements showed that the improvement comes from spreading "
   "control load away from the saturated residential controllers. The policy stayed "
   "competitive in the more balanced profiles.")
-P("Beyond the numbers, the study keeps a fast analytical training environment "
-  "separate from an empirical, packet-level evaluation, so the reported results rest "
-  "on what the network does rather than on assumed parameter trends. This separation "
+P("The sim-to-real separation means that all reported latency values come from timed "
+  "OpenFlow exchanges, not from the analytical surrogate used during training. This "
+  "separation "
   "also keeps the main cost — the need to pre-train the agent — manageable, since the "
   "training environment can be extended cheaply. The natural next steps follow "
   "directly from the limitations above: the business-profile gap calls for richer "
@@ -450,67 +458,70 @@ P("Beyond the numbers, the study keeps a fast analytical training environment "
 H("References", 1)
 refs = [
  # [1]
+ "ITU-T Focus Group on Metaverse (FG-MV), Geneva, Switzerland, 2024. [Online]. "
+ "Available: https://www.itu.int/en/ITU-T/focusgroups/mv",
+ # [2]
  "S. Islam, Z. A. Abdulsalam, B. A. Kumar, M. K. Hasan, R. Kolandaisamy and "
  "N. Safie, “Mobile networks toward 5G/6G: network architecture, opportunities and "
  "challenges in smart city,” IEEE Open J. Commun. Soc., vol. 6, pp. 3082–3093, 2025.",
- # [2]
+ # [3]
  "T. Singh, A. Solanki, S. K. Sharma, A. Nayyar and A. Paul, “A decade review on "
  "smart cities: paradigms, challenges and opportunities,” IEEE Access, vol. 10, "
  "pp. 68319–68364, 2022.",
- # [3]
+ # [4]
  "A. Volkov, A. Khakimov, A. Muthanna, R. Kirichek, A. Vladyko and "
  "A. Koucheryavy, “Interaction of the IoT traffic generated by a smart city "
  "segment with SDN core network,” in Wired/Wireless Internet Communications "
  "(WWIC 2017), Lecture Notes in Computer Science, vol. 10372, Springer, 2017, "
  "pp. 115–126.",
- # [4]
+ # [5]
  "D. Kreutz et al., “Software-defined networking: a comprehensive survey,” "
  "Proc. IEEE, vol. 103, no. 1, pp. 14–76, 2015.",
- # [5]
+ # [6]
  "M. Rahouti, K. Xiong and Y. Xin, “Secure software-defined networking "
  "communication systems for smart cities: current status, challenges, and "
  "trends,” IEEE Access, vol. 9, pp. 12083–12113, 2021.",
- # [6]
+ # [7]
  "W. M. Othman et al., “Key enabling technologies for 6G,” J. Sens. Actuator "
  "Netw., vol. 14, no. 2, art. 30, 2025.",
- # [7]
+ # [8]
  "Y. He, F. R. Yu, N. Zhao, V. C. M. Leung and H. Yin, “Software-defined networks "
  "with mobile edge computing and caching for smart cities: a big data deep "
  "reinforcement learning approach,” IEEE Commun. Mag., vol. 55, no. 12, "
  "pp. 31–37, 2017.",
- # [8]
+ # [9]
  "G. Wang, Y. Zhao, J. Huang, Q. Duan and J. Li, “A k-means-based network "
  "partition algorithm for controller placement in SDN,” in Proc. IEEE ICC, 2016, "
  "pp. 1–6.",
- # [9]
+ # [10]
  "H. Mostafaei, M. Menth and M. S. Obaidat, “A learning-automaton-based "
  "controller placement algorithm for software-defined networks,” in Proc. IEEE "
  "GLOBECOM, 2018, pp. 1–6.",
- # [10]
+ # [11]
  "A. A. Ateya, A. Muthanna, A. Vybornova, A. D. Algarni, A. Abuarqoub et al., "
  "“Chaotic salp swarm algorithm for SDN multi-controller networks,” Engineering "
  "Science and Technology, an International Journal, vol. 22, no. 4, "
  "pp. 1001–1012, 2019.",
- # [11]
+ # [12]
  "P. T. A. Quang, Y. Hadjadj-Aoul and A. Outtagarts, “A deep reinforcement "
  "learning approach for VNF forwarding graph embedding,” IEEE Trans. Netw. Serv. "
  "Manag., vol. 16, no. 4, pp. 1318–1331, 2019.",
- # [12]
+ # [13]
  "V. Mnih et al., “Human-level control through deep reinforcement learning,” "
  "Nature, vol. 518, pp. 529–533, 2015.",
- # [13]
+ # [14]
  "Z. Wang et al., “Dueling network architectures for deep reinforcement "
  "learning,” in Proc. ICML, 2016, pp. 1995–2003.",
- # [14]
+ # [15]
  "H. van Hasselt, A. Guez and D. Silver, “Deep reinforcement learning with double "
  "Q-learning,” in Proc. AAAI, 2016, pp. 2094–2100.",
- # [15]
+ # [16]
  "T. Schaul, J. Quan, I. Antonoglou and D. Silver, “Prioritized experience "
  "replay,” in Proc. ICLR, 2016.",
- # [16]
+ # [17]
  "N. McKeown et al., “OpenFlow: enabling innovation in campus networks,” ACM "
  "SIGCOMM Comput. Commun. Rev., vol. 38, no. 2, pp. 69–74, 2008.",
- # [17]
+ # [18]
  "B. Lantz, B. Heller and N. McKeown, “A network in a laptop: rapid prototyping "
  "for software-defined networks,” in Proc. ACM SIGCOMM HotNets, 2010.",
 ]
