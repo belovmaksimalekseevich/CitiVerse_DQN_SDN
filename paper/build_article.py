@@ -108,33 +108,35 @@ for r_ in kw.runs: r_.font.size = Pt(11)
 H("1. Introduction", 1)
 P("Smart-city and CitiVerse deployments connect thousands of edge and fog devices, "
   "from traffic signals and surveillance cameras to public access points and "
-  "environmental sensors. The traffic they produce is dense, bursty and, above all, "
+  "environmental sensors, and are increasingly framed within the 5G/6G smart-city "
+  "vision [1]. The traffic these devices produce is dense, bursty and, above all, "
   "non-stationary: its spatial distribution changes over the course of a day as "
-  "people move between residential, commercial and industrial districts. "
-  "Software-defined networking suits these networks for a concrete reason: by "
-  "separating the control plane from the data plane and exposing a programmable, "
-  "network-wide view, it lets the switch-to-controller mapping be recomputed and "
-  "reinstalled at run time instead of being fixed at design time [1]–[4]. The way "
-  "smart-city IoT traffic interacts with an SDN core has been characterised directly "
-  "for city segments [16], and the move toward 6G, with its sub-millisecond latency "
-  "targets and AI-native control, sharpens the need for this run-time adaptivity [6]. "
-  "At city scale a single controller is neither reliable nor fast enough, so the "
-  "control plane is distributed across several controllers, each responsible for a "
-  "subset of switches [3], [5].")
+  "people move between residential, commercial and industrial districts [2]. The way "
+  "such smart-city IoT traffic interacts with an SDN core has been characterised "
+  "directly for city segments [3]. Software-defined networking suits these networks "
+  "for a concrete reason: by separating the control plane from the data plane and "
+  "exposing a programmable, network-wide view, it lets the switch-to-controller "
+  "mapping be recomputed and reinstalled at run time instead of being fixed at design "
+  "time [4]. Security and management studies of SDN for smart cities point the same "
+  "way [5], while the move toward 6G, with its sub-millisecond latency targets and "
+  "AI-native control, sharpens the need for this run-time adaptivity [6]. At city "
+  "scale a single controller is neither reliable nor fast enough, so the control "
+  "plane is distributed across several controllers, each responsible for a subset of "
+  "switches and often paired with edge computing [7].")
 P("How switches are partitioned among controllers is the controller placement and "
   "clustering problem. The classical formulations are static: switches are grouped "
   "by geographic proximity or by k-means over a delay matrix, and the partition is "
-  "fixed at deployment time [7]. A substantial body of controller-placement work "
-  "refines this static partition with metaheuristic and learning-automaton schemes "
-  "[9], [17], but the partition still does not change once the network is running. "
+  "fixed at deployment time [8]. A substantial body of work refines this static "
+  "partition with learning-automaton [9] and metaheuristic [10] schemes, but the "
+  "partition still does not change once the network is running. "
   "Static partitions are attractive operationally and "
   "minimise propagation delay, but they are blind to load. When demand concentrates "
   "in a few zones, the controllers of those zones receive a disproportionate share of "
   "PACKET_IN events, their event queues build up, and the latency experienced when a "
   "new flow is set up rises steeply, even though other controllers remain idle. This "
   "is exactly the regime in which a CitiVerse network spends its mornings and evenings.")
-P("Reinforcement learning has been proposed to make placement adaptive [8], [9], and "
-  "deep reinforcement learning can handle the large discrete decision "
+P("Reinforcement learning has been proposed to make placement adaptive [11], and "
+  "deep reinforcement learning in particular can handle the large discrete decision "
   "space that arises when any switch may be reassigned to any controller [12]. Most of "
   "the existing literature, however, evaluates such policies on analytical models or "
   "on synthetic parameter sets, and reports performance trends rather than measured "
@@ -231,12 +233,13 @@ P("The reward is r = − ICD / 20 − 0.02 · m, where m is one if the action "
   "already contains both propagation and queuing, a single scalar reward is enough to "
   "express the full objective.")
 P("Network and learning algorithm.", bold=True)
-P("The value function is approximated by a Dueling network with a shared 256-unit "
-  "hidden representation and LayerNorm, which separates the state value from the "
-  "action advantage and stabilises learning when many actions have similar value. We "
-  "use Double Q-learning to reduce the overestimation bias of plain DQN, a prioritized "
-  "experience replay buffer (capacity 10⁵, α = 0.6, importance-sampling "
-  "β annealed from 0.4 to 1.0) so that informative transitions are replayed more "
+P("The value function is approximated by a Dueling network [13] with a shared "
+  "256-unit hidden representation and LayerNorm, which separates the state value from "
+  "the action advantage and stabilises learning when many actions have similar value. "
+  "We use Double Q-learning [14] to reduce the overestimation bias of plain DQN, a "
+  "prioritized experience replay buffer [15] (capacity 10⁵, α = 0.6, "
+  "importance-sampling β annealed from 0.4 to 1.0) so that informative transitions "
+  "are replayed more "
   "often, and 3-step returns to propagate reward faster. The network is trained with "
   "Adam at a learning rate of 3·10⁻⁴ under a cosine schedule, a discount "
   "factor of 0.99, mini-batches of 256, and a target network refreshed every 100 "
@@ -275,7 +278,8 @@ P("Training the agent end-to-end on the live emulation is infeasible: three seed
 H("4. Experimental testbed and methodology", 1)
 P("Topology.", bold=True)
 P("The evaluation network, shown in Fig. 1, comprises 20 Open vSwitch instances "
-  "running OpenFlow 1.3, grouped into five zones and served by five Ryu controllers "
+  "running OpenFlow 1.3 [16] in an emulation built with Mininet [17], grouped into "
+  "five zones and served by five Ryu controllers "
   "listening on ports 6653–6657. Two residential zones contain six and five switches, "
   "two commercial zones contain four and three, and an industrial zone contains two. "
   "Intra-zone links have a propagation delay of 3 ms; the four inter-zone backbone "
@@ -296,7 +300,7 @@ P("Controllers run a reactive layer-2 learning-switch application. Switches oper
 P("Load profiles.", bold=True)
 P("Four diurnal profiles set the per-zone demand through a multiplier applied to a "
   "base request rate (Table 1). Their diurnal structure mirrors the way smart-city "
-  "IoT traffic concentrates and shifts between districts over a day [16]. "
+  "IoT traffic concentrates and shifts between districts over the day. "
   "The morning profile concentrates demand in the "
   "residential zones, the business profile in the commercial zones, the evening "
   "profile spreads it across residential and commercial zones, and the night profile "
@@ -445,53 +449,70 @@ P("Beyond the numbers, the study keeps a fast analytical training environment "
 # ---------------------------------------------------------------- REFERENCES
 H("References", 1)
 refs = [
+ # [1]
  "S. Islam, Z. A. Abdulsalam, B. A. Kumar, M. K. Hasan, R. Kolandaisamy and "
  "N. Safie, “Mobile networks toward 5G/6G: network architecture, opportunities and "
  "challenges in smart city,” IEEE Open J. Commun. Soc., vol. 6, pp. 3082–3093, 2025.",
+ # [2]
  "T. Singh, A. Solanki, S. K. Sharma, A. Nayyar and A. Paul, “A decade review on "
  "smart cities: paradigms, challenges and opportunities,” IEEE Access, vol. 10, "
  "pp. 68319–68364, 2022.",
- "M. Rahouti, K. Xiong and Y. Xin, “Secure software-defined networking "
- "communication systems for smart cities: current status, challenges, and "
- "trends,” IEEE Access, vol. 9, pp. 12083–12113, 2021.",
- "D. Kreutz et al., “Software-defined networking: a comprehensive survey,” "
- "Proc. IEEE, vol. 103, no. 1, pp. 14–76, 2015.",
- "Y. He, F. R. Yu, N. Zhao, V. C. M. Leung and H. Yin, “Software-defined networks "
- "with mobile edge computing and caching for smart cities: a big data deep "
- "reinforcement learning approach,” IEEE Commun. Mag., vol. 55, no. 12, "
- "pp. 31–37, 2017.",
- "W. M. Othman et al., “Key enabling technologies for 6G,” J. Sens. Actuator "
- "Netw., vol. 14, no. 2, art. 30, 2025.",
- "G. Wang, Y. Zhao, J. Huang, Q. Duan and J. Li, “A k-means-based network "
- "partition algorithm for controller placement in SDN,” in Proc. IEEE ICC, 2016, "
- "pp. 1–6.",
- "P. T. A. Quang, Y. Hadjadj-Aoul and A. Outtagarts, “A deep reinforcement "
- "learning approach for VNF forwarding graph embedding,” IEEE Trans. Netw. Serv. "
- "Manag., vol. 16, no. 4, pp. 1318–1331, 2019.",
- "H. Mostafaei, M. Menth and M. S. Obaidat, “A learning-automaton-based "
- "controller placement algorithm for software-defined networks,” in Proc. IEEE "
- "GLOBECOM, 2018, pp. 1–6.",
- "N. McKeown et al., “OpenFlow: enabling innovation in campus networks,” ACM "
- "SIGCOMM Comput. Commun. Rev., vol. 38, no. 2, pp. 69–74, 2008.",
- "B. Lantz, B. Heller and N. McKeown, “A network in a laptop: rapid prototyping "
- "for software-defined networks,” in Proc. ACM SIGCOMM HotNets, 2010.",
- "V. Mnih et al., “Human-level control through deep reinforcement learning,” "
- "Nature, vol. 518, pp. 529–533, 2015.",
- "Z. Wang et al., “Dueling network architectures for deep reinforcement "
- "learning,” in Proc. ICML, 2016, pp. 1995–2003.",
- "H. van Hasselt, A. Guez and D. Silver, “Deep reinforcement learning with double "
- "Q-learning,” in Proc. AAAI, 2016, pp. 2094–2100.",
- "T. Schaul, J. Quan, I. Antonoglou and D. Silver, “Prioritized experience "
- "replay,” in Proc. ICLR, 2016.",
+ # [3]
  "A. Volkov, A. Khakimov, A. Muthanna, R. Kirichek, A. Vladyko and "
  "A. Koucheryavy, “Interaction of the IoT traffic generated by a smart city "
  "segment with SDN core network,” in Wired/Wireless Internet Communications "
  "(WWIC 2017), Lecture Notes in Computer Science, vol. 10372, Springer, 2017, "
  "pp. 115–126.",
+ # [4]
+ "D. Kreutz et al., “Software-defined networking: a comprehensive survey,” "
+ "Proc. IEEE, vol. 103, no. 1, pp. 14–76, 2015.",
+ # [5]
+ "M. Rahouti, K. Xiong and Y. Xin, “Secure software-defined networking "
+ "communication systems for smart cities: current status, challenges, and "
+ "trends,” IEEE Access, vol. 9, pp. 12083–12113, 2021.",
+ # [6]
+ "W. M. Othman et al., “Key enabling technologies for 6G,” J. Sens. Actuator "
+ "Netw., vol. 14, no. 2, art. 30, 2025.",
+ # [7]
+ "Y. He, F. R. Yu, N. Zhao, V. C. M. Leung and H. Yin, “Software-defined networks "
+ "with mobile edge computing and caching for smart cities: a big data deep "
+ "reinforcement learning approach,” IEEE Commun. Mag., vol. 55, no. 12, "
+ "pp. 31–37, 2017.",
+ # [8]
+ "G. Wang, Y. Zhao, J. Huang, Q. Duan and J. Li, “A k-means-based network "
+ "partition algorithm for controller placement in SDN,” in Proc. IEEE ICC, 2016, "
+ "pp. 1–6.",
+ # [9]
+ "H. Mostafaei, M. Menth and M. S. Obaidat, “A learning-automaton-based "
+ "controller placement algorithm for software-defined networks,” in Proc. IEEE "
+ "GLOBECOM, 2018, pp. 1–6.",
+ # [10]
  "A. A. Ateya, A. Muthanna, A. Vybornova, A. D. Algarni, A. Abuarqoub et al., "
  "“Chaotic salp swarm algorithm for SDN multi-controller networks,” Engineering "
  "Science and Technology, an International Journal, vol. 22, no. 4, "
  "pp. 1001–1012, 2019.",
+ # [11]
+ "P. T. A. Quang, Y. Hadjadj-Aoul and A. Outtagarts, “A deep reinforcement "
+ "learning approach for VNF forwarding graph embedding,” IEEE Trans. Netw. Serv. "
+ "Manag., vol. 16, no. 4, pp. 1318–1331, 2019.",
+ # [12]
+ "V. Mnih et al., “Human-level control through deep reinforcement learning,” "
+ "Nature, vol. 518, pp. 529–533, 2015.",
+ # [13]
+ "Z. Wang et al., “Dueling network architectures for deep reinforcement "
+ "learning,” in Proc. ICML, 2016, pp. 1995–2003.",
+ # [14]
+ "H. van Hasselt, A. Guez and D. Silver, “Deep reinforcement learning with double "
+ "Q-learning,” in Proc. AAAI, 2016, pp. 2094–2100.",
+ # [15]
+ "T. Schaul, J. Quan, I. Antonoglou and D. Silver, “Prioritized experience "
+ "replay,” in Proc. ICLR, 2016.",
+ # [16]
+ "N. McKeown et al., “OpenFlow: enabling innovation in campus networks,” ACM "
+ "SIGCOMM Comput. Commun. Rev., vol. 38, no. 2, pp. 69–74, 2008.",
+ # [17]
+ "B. Lantz, B. Heller and N. McKeown, “A network in a laptop: rapid prototyping "
+ "for software-defined networks,” in Proc. ACM SIGCOMM HotNets, 2010.",
 ]
 for i, rr in enumerate(refs, 1):
     p = doc.add_paragraph()
