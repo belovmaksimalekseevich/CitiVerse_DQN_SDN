@@ -81,7 +81,7 @@ P("Distributed software-defined networking (SDN) has become a practical way to "
   "residential controllers saturate while the commercial and industrial controllers "
   "sit almost idle, and the time needed to install a new flow grows by an order of "
   "magnitude. We cast switch-to-controller assignment, that is, the dynamic "
-  "clustering of switches around controllers, as a sequential decision "
+  "clustering of switches around a fixed set of controllers, as a sequential decision "
   "problem and solve it online with a Dueling Double Deep Q-Network trained with "
   "prioritized experience replay, n-step returns and a staged curriculum. Because "
   "end-to-end training requires on the order of 1.8 million environment steps, the "
@@ -93,7 +93,7 @@ P("Distributed software-defined networking (SDN) has become a practical way to "
   "packet-level load. Averaged over three random seeds, the learned policy lowers the "
   "mean flow-setup latency of the skewed morning profile from 419 ms under "
   "zone-static assignment to 38 ms, while remaining competitive with the strongest "
-  "static baseline during the more balanced daytime, evening and night profiles. The "
+  "static baseline during the more balanced evening and night profiles. The "
   "improvement is explained directly by the measurements: the agent spreads the "
   "control load of the busy residential zones across all five controllers instead of "
   "overloading two of them.")
@@ -101,8 +101,9 @@ P("Distributed software-defined networking (SDN) has become a practical way to "
 kw = doc.add_paragraph()
 kw.add_run("Keywords: ").bold = True
 kw.add_run("software-defined networking, distributed SDN controllers, controller "
-           "placement, dynamic clustering, deep reinforcement learning, Deep Q-Network, "
-           "flow-setup latency, load balancing, smart-city networks, Mininet, OpenFlow.")
+           "assignment, switch-to-controller mapping, dynamic clustering, deep "
+           "reinforcement learning, Deep Q-Network, flow-setup latency, load balancing, "
+           "smart-city networks, Mininet, OpenFlow.")
 for r_ in kw.runs: r_.font.size = Pt(11)
 
 # ---------------------------------------------------------------- 1 INTRO
@@ -127,7 +128,10 @@ P("Smart-city deployments — now also described as CitiVerse environments in th
   "plane is distributed across several controllers, each responsible for a subset of "
   "switches and often paired with edge computing [8].")
 P("How switches are partitioned among controllers is the controller placement and "
-  "clustering problem. The classical formulations are static: switches are grouped "
+  "clustering problem; in our setting the controllers themselves are fixed — one per "
+  "zone — and only the switch-to-controller assignment changes, so we are concerned "
+  "with the assignment, not with where controllers are placed. The classical "
+  "formulations are static: switches are grouped "
   "by geographic proximity or by k-means over a delay matrix, and the partition is "
   "fixed at deployment time [9]. A substantial body of work refines this static "
   "partition with learning-automaton [10] and metaheuristic [11] schemes, but the "
@@ -213,14 +217,20 @@ P("We treat reassignment as a Markov decision process and learn a policy with a 
   "Q-network. At each step the agent observes the network state, selects one "
   "reassignment, and receives a reward derived from the resulting ICD.", )
 P("State.", bold=True)
-P("The state is a 94-dimensional vector that summarises the current configuration "
-  "and load of the network: the normalised controller index of every switch; the "
-  "load of the controller each switch is currently attached to; the zone of every "
-  "switch and a flag indicating whether the switch is served by the controller of its "
-  "own zone; aggregate indicators (normalised ICD, throughput, maximum controller "
-  "load and the standard deviation of controller load); the per-controller PACKET_IN "
-  "rate; and a short encoding of the active traffic profile. This representation gives "
-  "the agent both the current mapping and the load imbalance it has to correct.")
+P("The state is a 94-dimensional vector built from four per-switch blocks, a block of "
+  "aggregate indicators, a per-controller block and a profile encoding. The four "
+  "per-switch blocks (20 values each, 80 in total) hold, for every switch, the "
+  "normalised index of its current controller, the load of that controller, the index "
+  "of its zone, and a binary flag for whether it is served by its own zone's "
+  "controller. Four aggregate scalars follow — the normalised ICD, an aggregate "
+  "throughput proxy, the maximum controller load and the standard deviation of "
+  "controller load — together with the per-controller PACKET_IN rate (5 values) and a "
+  "four-way one-hot encoding of the active traffic profile. A final scalar carries the "
+  "normalised migration count, giving 80 + 4 + 5 + 4 + 1 = 94 dimensions. The "
+  "controller index is encoded as a single normalised scalar per switch rather than a "
+  "one-hot block to keep the state compact at this topology scale; together with the "
+  "zone-match and aggregate features it gives the agent both the current mapping and "
+  "the load imbalance it has to correct.")
 P("Action.", bold=True)
 P("An action reassigns a single switch to a single controller, so the action space "
   "has n × k = 20 × 5 = 100 discrete actions. Actions that would violate a constraint "
@@ -259,8 +269,17 @@ P("Training the agent end-to-end on the live emulation is infeasible: three seed
   "beyond what a Mininet-in-the-loop setup can deliver in reasonable time. We "
   "therefore train inside the fast analytical environment of Section 2, in which ICD "
   "is computed from the propagation matrix and a convex, M/M/1-inspired queuing "
-  "penalty w(L) = 0.4 · L² / (μ − L), capped at 50 ms, with controller service "
-  "rate μ = 14 load units. We deliberately use a quadratic numerator rather than "
+  "penalty w(L) = 0.4 · L² / max(μ − L, 0.5), capped at 50 ms, with controller "
+  "service rate μ = 14 load units. Flooring the denominator at 0.5 and capping the "
+  "result at 50 ms keep the term finite and positive once the offered load reaches or "
+  "exceeds μ, so the saturated regime is represented by a large but bounded delay "
+  "rather than a singularity. One load unit corresponds to one unit of the per-zone "
+  "demand multiplier of Table 1, which in the testbed drives a base rate of 130 "
+  "PACKET_IN-inducing packets per second (Section 4); the analytical service rate "
+  "μ = 14 units therefore corresponds to roughly 1.8·10³ offered packets per second. "
+  "This is a surrogate scale used only to shape the training signal, not a measured "
+  "Ryu throughput — the true controller capacity is what the live measurement of "
+  "Section 5 probes. We deliberately use a quadratic numerator rather than "
   "the linear M/M/1 waiting-time expression: the training signal has to penalise "
   "near-saturation operation more sharply than a linear term would, and the "
   "coefficient was set so that the penalty stays in a realistic millisecond range. "
@@ -387,14 +406,23 @@ P("Why the policy wins.", bold=True)
 P("The measurements explain the morning result without appeal to the model. Under "
   "zone-static assignment the two residential controllers receive aggregate loads of "
   "about 15 and 10 units while the other three controllers carry less than 2 units "
-  "each; the busy controllers saturate, and the per-controller flow-setup latency "
-  "reaches 845 and 1138 ms, whereas the idle controllers stay below 100 ms (Fig. 4). "
-  "The learned policy moves a number of residential switches onto the underused "
-  "controllers, so that no controller is driven into saturation and the per-controller "
-  "latency settles uniformly around 20–30 ms. The throughput-balancing effect is also "
-  "visible in the realised controller loads (Fig. 5). In other words, the agent has "
-  "discovered control-plane load balancing on its own, and the benefit appears as a "
-  "real, measured drop in latency rather than as an assumed trend.")
+  "each. Both residential controllers are driven deep into saturation: their measured "
+  "per-controller flow-setup latencies are on the order of 0.8 s and 1.1 s — more than "
+  "ten times the under-100 ms of the three idle controllers (Fig. 4). At this depth of "
+  "saturation the per-controller figure is dominated by event-queue backlog, and the "
+  "ordering between the two saturated controllers falls within measurement noise; what "
+  "matters is that both sit an order of magnitude above the unloaded controllers. "
+  "Saturation is in fact severe enough that, under the zone-static map, several "
+  "residential flows do not complete within the three-second measurement window and "
+  "are excluded from the average, so the reported morning mean of 419 ms is taken over "
+  "the switches that did respond (14 of 20) and is a conservative estimate of the true "
+  "penalty. The learned policy moves a number of residential switches onto the "
+  "underused controllers, so that no controller is driven into saturation, every "
+  "switch responds, and the per-controller latency settles uniformly around 20–30 ms. "
+  "The load-balancing effect is also visible in the realised controller loads "
+  "(Fig. 5). In other words, the agent has discovered control-plane load balancing on "
+  "its own, and the benefit appears as a real, measured drop in latency rather than as "
+  "an assumed trend.")
 fig("fig_per_controller_latency.png", "Fig. 4. Per-controller flow-setup latency under "
     "the morning profile. ZoneOptimal saturates C0 and C1; the learned policy keeps "
     "all five controllers near 20–30 ms.")
@@ -416,7 +444,7 @@ P("It is worth saying why the agent trails ZoneOptimal here rather than matching
   "moderate-load profiles during the curriculum, or a reward that explicitly credits "
   "staying close when no controller is loaded, should close the gap.")
 P("Limitations.", bold=True)
-P("Two points deserve an honest statement. First, the learned policy does not "
+P("Several points deserve an honest statement. First, the learned policy does not "
   "dominate in every regime: in the business profile a propagation-optimal static map "
   "is already near-ideal and is not improved upon. The contribution is therefore best "
   "described as a large gain under load skew together with competitive behaviour "
@@ -429,6 +457,21 @@ P("Two points deserve an honest statement. First, the learned policy does not "
   "zone-static assignment by a wide margin. We also note that three seeds is at the "
   "lower end of what is desirable for this kind of study; we treat the three-seed "
   "mean as indicative, and a larger set would tighten the estimates.")
+P("Three further caveats bound the scope of the claims. The results characterise the "
+  "steady-state latency reached under each profile once the policy has adapted; we do "
+  "not yet measure the online transient itself — how many migrations the agent makes, "
+  "and what latency is observed, while a profile is changing — which is the natural "
+  "object of a study that calls itself dynamic and which we leave to future work. "
+  "Each per-switch latency is the mean of two repetitions, and the static baselines "
+  "are reported from a single run without error bars; the per-seed spread we quote for "
+  "the learned policy therefore captures training variability but not the full "
+  "measurement noise, and more repetitions would let the baselines be bracketed on the "
+  "same footing. Finally, the migration penalty in the reward (0.02 per moved switch) "
+  "treats a reassignment as almost free, whereas in a real distributed control plane "
+  "moving a switch is an OpenFlow role-change handshake that carries its own latency; "
+  "the policies we report are near-static within a profile, so this cost is small "
+  "here, but a faithfully priced migration would matter for rapid re-optimisation and "
+  "is not modelled.")
 
 # ---------------------------------------------------------------- 6 CONCLUSION
 H("6. Conclusion", 1)
@@ -458,8 +501,8 @@ P("The sim-to-real separation means that all reported latency values come from t
 H("References", 1)
 refs = [
  # [1]
- "ITU-T Focus Group on Metaverse (FG-MV), Geneva, Switzerland, 2024. [Online]. "
- "Available: https://www.itu.int/en/ITU-T/focusgroups/mv",
+ "ITU-T, “Definitions of CitiVerse,” Technical Report ITU FGMV-34, ITU Focus Group "
+ "on Metaverse (FG-MV), Jun. 2024.",
  # [2]
  "S. Islam, Z. A. Abdulsalam, B. A. Kumar, M. K. Hasan, R. Kolandaisamy and "
  "N. Safie, “Mobile networks toward 5G/6G: network architecture, opportunities and "
@@ -482,8 +525,8 @@ refs = [
  "communication systems for smart cities: current status, challenges, and "
  "trends,” IEEE Access, vol. 9, pp. 12083–12113, 2021.",
  # [7]
- "W. M. Othman et al., “Key enabling technologies for 6G,” J. Sens. Actuator "
- "Netw., vol. 14, no. 2, art. 30, 2025.",
+ "ITU-R, “Framework and overall objectives of the future development of IMT for "
+ "2030 and beyond,” Recommendation ITU-R M.2160-0, Nov. 2023.",
  # [8]
  "Y. He, F. R. Yu, N. Zhao, V. C. M. Leung and H. Yin, “Software-defined networks "
  "with mobile edge computing and caching for smart cities: a big data deep "
