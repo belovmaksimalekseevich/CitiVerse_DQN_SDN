@@ -1,0 +1,169 @@
+# iperf3 Traffic Integration for Phase 2 — Design Notes
+# Written 2026-05-28. Use this to implement code tomorrow.
+
+═══════════════════════════════════════════════════════
+WHY THIS IS NEEDED
+═══════════════════════════════════════════════════════
+
+The current ICD measurement uses OFPEchoRequest RTT/2. This only captures
+propagation delay (tc netem on loopback). It does NOT capture queuing delay
+at the Ryu controller. Ryu is single-threaded: when many switches flood it
+with PACKET_IN events, the echo request has to wait in line behind them.
+Without real traffic, the echo sails through an empty queue and we always
+measure tc netem delay only. ZoneOptimal always wins because it minimises
+propagation by definition. DQN's load-balancing benefit is invisible.
+
+The fix: generate real iperf3 UDP traffic during every step of Phase 2
+so that overloaded controllers actually queue up and the echo RTT rises.
+DQN's reassignments then show up as real RTT reductions.
+
+═══════════════════════════════════════════════════════
+TRAFFIC MODEL
+═══════════════════════════════════════════════════════
+
+Each zone has a load factor per traffic profile (Table 1 in the paper):
+
+  Zone   | morning | business | evening | night
+  -------|---------|----------|---------|------
+  res1   |   2.5   |   0.7    |   2.0   |  0.3
+  res2   |   2.0   |   0.7    |   2.0   |  0.3
+  com1   |   0.5   |   2.5    |   1.5   |  0.3
+  com2   |   0.5   |   2.0    |   1.5   |  0.3
+  ind    |   0.3   |   1.0    |   0.5   |  2.5
+
+Base UDP bandwidth per switch: 2 Mbit/s (chosen so a single controller
+with load_factor=1.0 and 4 switches gets ~8 Mbit/s — enough to generate
+hundreds of PACKET_IN events per second in Mininet without saturating RAM).
+
+Actual rate for switch s in zone z under profile p:
+  rate_s = BASE_RATE_MBPS * zone_load_factor[z][p]
+
+═══════════════════════════════════════════════════════
+IMPLEMENTATION — WHERE TO PUT THE CODE
+═══════════════════════════════════════════════════════
+
+File: dqn/environment.py  (class CitiverseRealEnv)
+
+Add a new helper class TrafficGenerator at the top of the file.
+It holds iperf3 server and client subprocesses.
+
+TrafficGenerator.__init__(net, switches, zone_map):
+  - net: the Mininet net object
+  - switches: list of 20 Mininet host/switch objects that represent edge nodes
+  - zone_map: dict mapping switch index -> zone name
+
+TrafficGenerator.start_servers():
+  - For each switch, launch iperf3 -s -p 5201 -D in the background
+    using switch.popen(). Store the Popen handles.
+
+TrafficGenerator.set_profile(profile_name):
+  - Store current profile. Do NOT restart clients here — update rates.
+
+TrafficGenerator.start_traffic(assignment, profile):
+  - assignment: dict {sw_index -> ctrl_index}
+  - For each switch sw_index:
+      zone = zone_map[sw_index]
+      rate = BASE_RATE_MBPS * LOAD_FACTORS[zone][profile]
+      target_ip = controller_ips[assignment[sw_index]]  (loopback addresses)
+      Launch: switch.popen(
+          fiperf3 -c {target_ip} -p 5201 -u -b {rate}M -t 3600 -i 999,
+          shell=True
+      )
+  - Store client Popen handles. These run in background continuously.
+
+TrafficGenerator.update_traffic(new_assignment, profile):
+  - Kill all existing client processes
+  - Call start_traffic(new_assignment, profile)
+  - Wait 0.3s for new flows to establish
+
+TrafficGenerator.stop():
+  - Kill all client and server processes
+
+Integration into CitiverseRealEnv:
+  - In __init__: create TrafficGenerator, call start_servers()
+  - In reset(): call generator.update_traffic(current_assignment, profile)
+                then wait 0.5s before measuring
+  - In step() after _apply_assignment(): call generator.update_traffic(...)
+  - In close(): call generator.stop()
+
+═══════════════════════════════════════════════════════
+MEASUREMENT CHANGE
+═══════════════════════════════════════════════════════
+
+Keep OFPEchoRequest as the ICD measurement mechanism. Do NOT change it.
+The point is that WITH real traffic running, the Ryu event loop gets busy
+and echo RTT rises on overloaded controllers. No changes needed to the
+measurement code itself — just run it while traffic is flowing.
+
+Wait time after update_traffic before measuring: 0.5s minimum.
+This lets iperf3 flows establish and PACKET_IN events accumulate.
+
+═══════════════════════════════════════════════════════
+BASELINE RE-MEASUREMENT
+═══════════════════════════════════════════════════════
+
+scripts/run_early_mininet_baselines.py must also be updated to:
+1. Start TrafficGenerator
+2. For each baseline: set assignment, call update_traffic(assignment, profile)
+   then wait 1s, then measure 30 OFPEchoRequest samples
+3. Report ICD per-profile for each baseline (not just one static measurement)
+
+This means each baseline will have 4 ICD values (one per profile) instead
+of a single value. ZoneOptimal will still be best under morning traffic but
+will show degraded ICD under business and night profiles.
+
+═══════════════════════════════════════════════════════
+EXPECTED OUTCOME
+═══════════════════════════════════════════════════════
+
+Under business profile:
+  ZoneOptimal: com1+com2 controllers each handle 2.5x+2.0x load.
+  Expected echo RTT: 6–10ms (Ryu event loop backlog).
+  DQN: moves some com switches to idle res controllers.
+  Expected echo RTT: 4–5ms.
+
+Under night profile:
+  ZoneOptimal: ind controller handles 2.5x, other 4 controllers nearly idle.
+  Expected echo RTT: 5–8ms on ind controller.
+  DQN: spreads ind load across controllers.
+  Expected echo RTT: 3.5–5ms.
+
+Under morning profile:
+  ZoneOptimal: res1+res2 controllers carry load, zone-matched → ZO still wins.
+  Expected ZO: ~4ms, DQN: ~4.5ms.
+
+Average across all 4 profiles: DQN should be at or below ZO.
+This is the main claim of the paper.
+
+═══════════════════════════════════════════════════════
+PHASE 2 RE-RUN PLAN
+═══════════════════════════════════════════════════════
+
+1. Implement TrafficGenerator and integrate into CitiverseRealEnv
+2. Update run_early_mininet_baselines.py to use per-profile measurement
+3. Verify manually: run one episode, check that echo RTT rises under load
+   (should see >5ms on overloaded controller vs ~3ms baseline)
+4. Re-run Phase 2 fine-tuning: load p1_seed*.pth, train 200 ep each seed
+   Same command as before:
+   sudo bash -c 'PYTHONPATH=/usr/lib/python3/dist-packages PYTHONUNBUFFERED=1
+   nohup /home/maksim/dqn_env/bin/python3 -u watcher.py --skip-p1
+   > logs/watcher_phase2_v2.log 2>&1 &'
+5. Re-run baselines with traffic to get per-profile baseline ICD
+6. Run evaluation (per-profile, 20 ep × 4 profiles × 3 seeds)
+
+Estimated total time: ~4 hours (Phase 2) + ~1 hour (baselines + eval)
+
+═══════════════════════════════════════════════════════
+KEY PARAMETERS TO TUNE
+═══════════════════════════════════════════════════════
+
+BASE_RATE_MBPS = 2.0   (start here; increase if Ryu queue effect is too small)
+WAIT_AFTER_UPDATE = 0.5s
+IPERF3_SERVER_PORT = 5201
+Controller loopback IPs: 127.0.0.1 ports 6653-6657 → use separate IPs
+  e.g., 127.0.0.1, 127.0.0.2, 127.0.0.3, 127.0.0.4, 127.0.0.5
+  (Linux loopback supports the full 127.0.0.0/8 range)
+
+If BASE_RATE_MBPS=2 does not produce visible queue effect on Ryu,
+increase to 5 or 10. Watch CPU usage — do not saturate the server.
+

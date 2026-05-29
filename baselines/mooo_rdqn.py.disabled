@@ -1,0 +1,181 @@
+# baselines/mooo_rdqn.py
+"""
+Simplified MOOO-RDQN: decentralized multi-agent DQN.
+One LocalDQN per controller — each optimizes its own ICD + load.
+Used as SOTA comparison baseline. NOT the original paper code.
+"""
+import numpy as np
+import torch
+import torch.nn as nn
+from topology.topology_data import (
+    N_SWITCHES, N_CONTROLLERS, LATENCY_MATRIX, MAX_CTRL_LOAD,
+)
+
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+class LocalDQN(nn.Module):
+    def __init__(self, state_dim, action_dim, hidden=128):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, action_dim),
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class _ReplayBuf:
+    def __init__(self, capacity=10_000, state_dim=94):
+        self.cap = capacity
+        self.sdim = state_dim
+        self.s  = np.zeros((capacity, state_dim), np.float32)
+        self.a  = np.zeros(capacity, np.int64)
+        self.r  = np.zeros(capacity, np.float32)
+        self.s2 = np.zeros((capacity, state_dim), np.float32)
+        self.d  = np.zeros(capacity, np.float32)
+        self.ptr = self.size = 0
+
+    def push(self, s, a, r, s2, done):
+        i = self.ptr % self.cap
+        self.s[i] = s; self.a[i] = a; self.r[i] = r
+        self.s2[i] = s2; self.d[i] = float(done)
+        self.ptr += 1
+        self.size = min(self.size + 1, self.cap)
+
+    def sample(self, n):
+        idx = np.random.randint(0, self.size, n)
+        return (torch.FloatTensor(self.s[idx]).to(DEVICE),
+                torch.LongTensor(self.a[idx]).to(DEVICE),
+                torch.FloatTensor(self.r[idx]).to(DEVICE),
+                torch.FloatTensor(self.s2[idx]).to(DEVICE),
+                torch.FloatTensor(self.d[idx]).to(DEVICE))
+
+    def ready(self, n):
+        return self.size >= n
+
+
+class MOOORDQNBaseline:
+    """
+    Simplified MOOO-RDQN for CitiVerse topology comparison.
+    Each controller selects which switch to reassign to itself.
+    """
+
+    def __init__(self, state_dim=94, seed=42):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        self.state_dim = state_dim
+        # Each agent: action = which switch (0..N_SWITCHES-1) to claim
+        self.agents  = [LocalDQN(state_dim, N_SWITCHES).to(DEVICE) for _ in range(N_CONTROLLERS)]
+        self.targets = [LocalDQN(state_dim, N_SWITCHES).to(DEVICE) for _ in range(N_CONTROLLERS)]
+        self.bufs    = [_ReplayBuf(10_000, state_dim) for _ in range(N_CONTROLLERS)]
+        self.opts    = [torch.optim.Adam(a.parameters(), lr=1e-3) for a in self.agents]
+        for i in range(N_CONTROLLERS):
+            self.targets[i].load_state_dict(self.agents[i].state_dict())
+        self.assignments = np.arange(N_SWITCHES) % N_CONTROLLERS
+        self.eps  = 1.0
+        self.step = 0
+
+    def _local_reward(self, assignments, ctrl_idx):
+        mine = [i for i in range(N_SWITCHES) if assignments[i] == ctrl_idx]
+        if not mine:
+            return -1.0
+        icd = float(np.mean([LATENCY_MATRIX[i][ctrl_idx] for i in mine]))
+        load = len(mine)
+        overload = max(0.0, load - MAX_CTRL_LOAD) * 0.5
+        return -(icd / 100.0 + overload)
+
+    def select_actions(self, state):
+        self.eps = max(0.05, 1.0 - self.step / 50_000)
+        new_asgn = self.assignments.copy()
+        for ctrl_idx in range(N_CONTROLLERS):
+            if np.random.random() < self.eps:
+                sw = int(np.random.randint(N_SWITCHES))
+            else:
+                s = torch.FloatTensor(state).unsqueeze(0).to(DEVICE)
+                with torch.no_grad():
+                    q = self.agents[ctrl_idx](s)
+                sw = int(q.argmax().item())
+            new_asgn[sw] = ctrl_idx
+        return new_asgn
+
+    def update(self, state, new_asgn, next_state, batch_size=64, gamma=0.99):
+        for ctrl_idx in range(N_CONTROLLERS):
+            sw_action = int(np.where(new_asgn == ctrl_idx)[0][0]) if ctrl_idx in new_asgn else 0
+            r = self._local_reward(new_asgn, ctrl_idx)
+            self.bufs[ctrl_idx].push(state, sw_action, r, next_state, False)
+
+        if self.step % 100 == 0:
+            for i in range(N_CONTROLLERS):
+                self.targets[i].load_state_dict(self.agents[i].state_dict())
+
+        for ctrl_idx in range(N_CONTROLLERS):
+            buf = self.bufs[ctrl_idx]
+            if not buf.ready(batch_size):
+                continue
+            s, a, r, s2, d = buf.sample(batch_size)
+            with torch.no_grad():
+                q_next = self.targets[ctrl_idx](s2).max(1)[0]
+                q_target = r + gamma * (1 - d) * q_next
+            q_pred = self.agents[ctrl_idx](s).gather(1, a.unsqueeze(1)).squeeze(1)
+            loss = nn.functional.smooth_l1_loss(q_pred, q_target)
+            self.opts[ctrl_idx].zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(self.agents[ctrl_idx].parameters(), 10.0)
+            self.opts[ctrl_idx].step()
+
+        self.step += 1
+        self.assignments = new_asgn
+
+
+def run_mooo_rdqn_baseline(env, n_episodes=1000, seed=42):
+    """
+    Train simplified MOOO-RDQN on given env and evaluate.
+    env must expose: reset(), step(action), get_action_mask(), assignments attribute.
+    Returns dict: {icd_mean, icd_std, label}.
+    """
+    from topology.topology_data import STATE_DIM
+    agent = MOOORDQNBaseline(state_dim=STATE_DIM, seed=seed)
+    icd_list = []
+
+    for ep in range(n_episodes):
+        state = env.reset()
+        ep_icd = []
+
+        for _ in range(200):
+            new_asgn = agent.select_actions(state)
+            if hasattr(env, 'assignments'):
+                env.assignments[:] = new_asgn
+
+            # Build dummy action: assign sw_0 to its controller
+            action = int(new_asgn[0])
+            next_state, _, done, info = env.step(action)
+            agent.update(state, new_asgn, next_state)
+            state = next_state
+            ep_icd.append(info['icd_ms'])
+            if done:
+                break
+
+        icd_list.append(float(np.mean(ep_icd)))
+
+    eval_icds = icd_list[-20:]
+    return {
+        'icd_mean': float(np.mean(eval_icds)),
+        'icd_std':  float(np.std(eval_icds)),
+        'label':    'MOOO-RDQN (simplified)',
+    }
+
+
+if __name__ == '__main__':
+    import sys
+    sys.path.insert(0, '/home/maksim/dqn_simenv_mininet')
+    from dqn.sim_environment import CitiverseSimEnv
+    results = []
+    for seed in [42, 123, 456]:
+        env = CitiverseSimEnv(seed=seed)
+        res = run_mooo_rdqn_baseline(env, n_episodes=100, seed=seed)
+        print(f'seed={seed}: ICD={res["icd_mean"]:.2f}±{res["icd_std"]:.2f}ms')
+        results.append(res['icd_mean'])
+    print(f'MOOO-RDQN mean: {np.mean(results):.2f}±{np.std(results):.2f}ms')

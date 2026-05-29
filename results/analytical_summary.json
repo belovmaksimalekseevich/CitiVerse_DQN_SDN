@@ -1,0 +1,45 @@
+{
+  "note": "ANALYTICAL fallback (queuing-aware M/M/1, SimEnv). Headline result is results/measured_summary.json (live Mininet).",
+  "per_profile": {
+    "morning": {
+      "zone_optimal_icd": 20.54,
+      "load_balanced_icd": 14.78,
+      "kmeans_icd": 31.64,
+      "dqn_icd": 13.2,
+      "dqn_icd_std": 2.73,
+      "improvement_vs_zo_pct": 35.7,
+      "dqn_load_std": 3.27,
+      "beats_zo": true
+    },
+    "business": {
+      "zone_optimal_icd": 5.62,
+      "load_balanced_icd": 14.25,
+      "kmeans_icd": 16.72,
+      "dqn_icd": 12.52,
+      "dqn_icd_std": 1.37,
+      "improvement_vs_zo_pct": -123.0,
+      "dqn_load_std": 2.95,
+      "beats_zo": false
+    },
+    "evening": {
+      "zone_optimal_icd": 14.63,
+      "load_balanced_icd": 15.53,
+      "kmeans_icd": 25.73,
+      "dqn_icd": 11.99,
+      "dqn_icd_std": 1.3,
+      "improvement_vs_zo_pct": 18.0,
+      "dqn_load_std": 2.94,
+      "beats_zo": true
+    },
+    "night": {
+      "zone_optimal_icd": 3.17,
+      "load_balanced_icd": 13.2,
+      "kmeans_icd": 14.27,
+      "dqn_icd": 12.25,
+      "dqn_icd_std": 0.96,
+      "improvement_vs_zo_pct": -285.9,
+      "dqn_load_std": 2.99,
+      "beats_zo": false
+    }
+  }
+}

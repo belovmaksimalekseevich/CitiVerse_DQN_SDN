@@ -1,0 +1,14 @@
+# Core (pip-installable)
+torch>=2.0
+numpy>=1.24
+matplotlib>=3.7
+networkx>=3.0
+
+# SDN controller (Linux)
+ryu>=4.34
+
+# Optional: rebuilding the article .docx
+python-docx>=1.1
+
+# System dependencies (NOT pip — install via apt on Linux):
+#   mininet, openvswitch-switch
